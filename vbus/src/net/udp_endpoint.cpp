@@ -16,8 +16,8 @@
 
 namespace vbus {
 
-UdpEndpoint::UdpEndpoint(IBus &bus, uint16_t port)
-    : m_Bus(bus), m_Port(port) {}
+UdpEndpoint::UdpEndpoint(IBus &bus, std::string bindHost, uint16_t port)
+    : m_Bus(bus), m_BindHost(std::move(bindHost)), m_Port(port) {}
 
 bool UdpEndpoint::start() {
     if (m_Running.load()) return true;
@@ -39,12 +39,13 @@ bool UdpEndpoint::start() {
                  reinterpret_cast<const char *>(&opt), sizeof(opt));
 
     sockaddr_in addr{};
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port        = htons(m_Port);
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(m_Port);
+    if (inet_pton(AF_INET, m_BindHost.c_str(), &addr.sin_addr) != 1)
+        addr.sin_addr.s_addr = INADDR_ANY; // fall back if host is empty/invalid
 
     if (::bind(m_Sock, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
-        std::cerr << "[UdpEndpoint] bind() failed on port " << m_Port << "\n";
+        std::cerr << "[UdpEndpoint] bind() failed on " << m_BindHost << ":" << m_Port << "\n";
         closesocket(m_Sock);
         m_Sock = INVALID_SOCKET;
         return false;
@@ -63,7 +64,7 @@ bool UdpEndpoint::start() {
 
     m_Running.store(true);
     m_Thread = std::thread(&UdpEndpoint::recvLoop, this);
-    std::cout << "[UdpEndpoint] listening on UDP port " << m_Port << "\n";
+    std::cout << "[UdpEndpoint] listening on UDP " << m_BindHost << ":" << m_Port << "\n";
     return true;
 }
 

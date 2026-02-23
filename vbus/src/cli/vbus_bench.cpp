@@ -19,6 +19,13 @@
 #pragma comment(lib, "ws2_32.lib")
 #include <windows.h>
 
+// SIO_UDP_CONNRESET suppresses the WSAECONNRESET (10054) error that Windows
+// generates on a UDP socket when an ICMP "port unreachable" reply is received.
+// Defined in mstcpip.h on newer SDKs; fall back to the well-known raw value.
+#ifndef SIO_UDP_CONNRESET
+#  define SIO_UDP_CONNRESET 0x9800000CUL
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -107,6 +114,23 @@ static void reporter_thread(const Stats &st, const char *label) {
     }
 }
 
+// ─── Hostname resolution ─────────────────────────────────────────────────────
+
+// Resolves a hostname or dotted-decimal string to a sockaddr_in.
+// Returns true on success. Works for "localhost", "127.0.0.1", etc.
+static bool resolve_addr(const char *host, uint16_t port, sockaddr_in &out) {
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    char portstr[8];
+    std::snprintf(portstr, sizeof(portstr), "%u", port);
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || res == nullptr)
+        return false;
+    out = *reinterpret_cast<sockaddr_in *>(res->ai_addr);
+    freeaddrinfo(res);
+    return true;
+}
+
 // ─── CTRL-C handler ───────────────────────────────────────────────────────────
 
 static BOOL WINAPI ctrl_handler(DWORD) {
@@ -121,14 +145,25 @@ static int run_udp_send(const char *host, uint16_t port,
     SOCKET s = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) { std::fprintf(stderr, "socket failed\n"); return 1; }
 
+    // On Windows, an ICMP "port unreachable" reply to a UDP datagram causes the
+    // next sendto() on the same unconnected socket to fail with WSAECONNRESET
+    // (10054). Suppress this behaviour so the sender works even when no receiver
+    // is running yet (e.g. the capture endpoint is started after the bench).
+    DWORD connreset = 0;
+    DWORD bytes_ret = 0;
+    WSAIoctl(s, SIO_UDP_CONNRESET, &connreset, sizeof(connreset),
+             nullptr, 0, &bytes_ret, nullptr, nullptr);
+
     // Set send buffer large enough for high-rate bursts
     int sndbuf = 4 * 1024 * 1024;
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&sndbuf, sizeof(sndbuf));
 
     sockaddr_in dst{};
-    dst.sin_family = AF_INET;
-    dst.sin_port   = htons(port);
-    inet_pton(AF_INET, host, &dst.sin_addr);
+    if (!resolve_addr(host, port, dst)) {
+        std::fprintf(stderr, "Cannot resolve host: %s\n", host);
+        closesocket(s);
+        return 1;
+    }
 
     const int    psize   = payload_size_for_rate(rate_bps);
     std::vector<char> buf(psize, 0);
@@ -221,9 +256,11 @@ static int run_tcp_send(const char *host, uint16_t port,
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, (const char *)&sndbuf, sizeof(sndbuf));
 
     sockaddr_in dst{};
-    dst.sin_family = AF_INET;
-    dst.sin_port   = htons(port);
-    inet_pton(AF_INET, host, &dst.sin_addr);
+    if (!resolve_addr(host, port, dst)) {
+        std::fprintf(stderr, "Cannot resolve host: %s\n", host);
+        closesocket(s);
+        return 1;
+    }
 
     if (::connect(s, reinterpret_cast<sockaddr*>(&dst), sizeof(dst)) != 0) {
         std::fprintf(stderr, "connect failed (is vbus_bench recv running?)\n");

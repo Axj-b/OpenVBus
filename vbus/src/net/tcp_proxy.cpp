@@ -16,9 +16,10 @@
 
 namespace vbus {
 
-TcpProxy::TcpProxy(IBus &bus, uint16_t bindPort,
+TcpProxy::TcpProxy(IBus &bus, std::string bindHost, uint16_t bindPort,
                    std::string targetHost, uint16_t targetPort)
     : m_Bus(bus)
+    , m_BindHost(std::move(bindHost))
     , m_BindPort(bindPort)
     , m_TargetHost(std::move(targetHost))
     , m_TargetPort(targetPort) {}
@@ -42,12 +43,13 @@ bool TcpProxy::start() {
                  reinterpret_cast<const char *>(&opt), sizeof(opt));
 
     sockaddr_in addr{};
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port        = htons(m_BindPort);
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(m_BindPort);
+    if (inet_pton(AF_INET, m_BindHost.c_str(), &addr.sin_addr) != 1)
+        addr.sin_addr.s_addr = INADDR_ANY; // fall back if host is empty/invalid
 
     if (::bind(m_Listener, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
-        std::cerr << "[TcpProxy] bind() failed on port " << m_BindPort << "\n";
+        std::cerr << "[TcpProxy] bind() failed on " << m_BindHost << ":" << m_BindPort << "\n";
         closesocket(m_Listener);
         m_Listener = INVALID_SOCKET;
         return false;

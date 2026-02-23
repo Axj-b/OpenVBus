@@ -21,7 +21,7 @@ static constexpr SOCKET INVALID_SOCKET = -1;
 
 namespace vbus {
 
-// Binds a UDP socket to 0.0.0.0:<port> and feeds every received datagram
+// Binds a UDP socket to <bindHost>:<bindPort> and feeds every received datagram
 // into the bus as a Frame{Proto::UDP}.
 //
 // Frame.Tag encoding (64-bit):
@@ -33,15 +33,17 @@ namespace vbus {
 // Any Recorder tap attached to the bus will capture them automatically.
 class UdpEndpoint : public ICaptureEndpoint {
 public:
-    UdpEndpoint(IBus &bus, uint16_t bindPort);
+    // bindHost: dotted-decimal IPv4 (e.g. "0.0.0.0" or "127.0.0.1")
+    UdpEndpoint(IBus &bus, std::string bindHost, uint16_t bindPort);
     ~UdpEndpoint() override { stop(); }
 
     bool start() override;
     void stop()  override;
 
 private:
-    IBus     &m_Bus;
-    uint16_t  m_Port;
+    IBus        &m_Bus;
+    std::string  m_BindHost;
+    uint16_t     m_Port;
     SOCKET    m_Sock{INVALID_SOCKET};
     std::atomic<bool> m_Running{false};
     std::thread       m_Thread;

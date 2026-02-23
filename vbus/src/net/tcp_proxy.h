@@ -21,7 +21,7 @@ static constexpr SOCKET INVALID_SOCKET = -1;
 
 namespace vbus {
 
-// Transparent TCP proxy. Listens on 0.0.0.0:<bindPort>.
+// Transparent TCP proxy. Listens on <bindHost>:<bindPort>.
 // When a client connects, simultaneously opens a connection to
 // <targetHost>:<targetPort> and bidirectionally relays data.
 //
@@ -35,7 +35,8 @@ namespace vbus {
 // one closes.
 class TcpProxy : public ICaptureEndpoint {
 public:
-    TcpProxy(IBus &bus, uint16_t bindPort,
+    // bindHost: dotted-decimal IPv4 (e.g. "0.0.0.0" or "127.0.0.1")
+    TcpProxy(IBus &bus, std::string bindHost, uint16_t bindPort,
              std::string targetHost, uint16_t targetPort);
     ~TcpProxy() override { stop(); }
 
@@ -44,6 +45,7 @@ public:
 
 private:
     IBus        &m_Bus;
+    std::string  m_BindHost;
     uint16_t     m_BindPort;
     std::string  m_TargetHost;
     uint16_t     m_TargetPort;

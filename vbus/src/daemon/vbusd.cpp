@@ -306,29 +306,33 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
         return;
     }
 
-    // ── capture-udp <name> <bindport>
-    if (args[0] == "capture-udp" && args.size() >= 3) {
+    // ── capture-udp <name> <bindhost> <bindport>
+    //    bindhost: dotted-decimal IPv4 (use "0.0.0.0" to listen on all interfaces)
+    if (args[0] == "capture-udp" && args.size() >= 4) {
         std::scoped_lock lk(g_mtx);
         auto it = g_buses.find(args[1]);
         if (it == g_buses.end()) { resp = "ERR no bus"; return; }
         if (it->second.cap) { it->second.cap->stop(); }
-        uint16_t port = static_cast<uint16_t>(std::stoul(args[2]));
-        auto ep = std::make_unique<UdpEndpoint>(*it->second.bus, port);
+        const std::string &bindHost = args[2];
+        uint16_t port = static_cast<uint16_t>(std::stoul(args[3]));
+        auto ep = std::make_unique<UdpEndpoint>(*it->second.bus, bindHost, port);
         if (!ep->start()) { resp = "ERR bind failed"; return; }
         it->second.cap = std::move(ep);
         resp = "OK capturing udp";
         return;
     }
 
-    // ── capture-tcp <name> <bindport> <targethost> <targetport>
-    if (args[0] == "capture-tcp" && args.size() >= 5) {
+    // ── capture-tcp <name> <bindhost> <bindport> <targethost> <targetport>
+    //    bindhost: dotted-decimal IPv4 (use "0.0.0.0" to listen on all interfaces)
+    if (args[0] == "capture-tcp" && args.size() >= 6) {
         std::scoped_lock lk(g_mtx);
         auto it = g_buses.find(args[1]);
         if (it == g_buses.end()) { resp = "ERR no bus"; return; }
         if (it->second.cap) { it->second.cap->stop(); }
-        uint16_t bindPort   = static_cast<uint16_t>(std::stoul(args[2]));
-        uint16_t targetPort = static_cast<uint16_t>(std::stoul(args[4]));
-        auto ep = std::make_unique<TcpProxy>(*it->second.bus, bindPort, args[3], targetPort);
+        const std::string &bindHost = args[2];
+        uint16_t bindPort   = static_cast<uint16_t>(std::stoul(args[3]));
+        uint16_t targetPort = static_cast<uint16_t>(std::stoul(args[5]));
+        auto ep = std::make_unique<TcpProxy>(*it->second.bus, bindHost, bindPort, args[4], targetPort);
         if (!ep->start()) { resp = "ERR listen failed"; return; }
         it->second.cap = std::move(ep);
         resp = "OK capturing tcp";

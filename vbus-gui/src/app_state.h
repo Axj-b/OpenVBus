@@ -37,6 +37,7 @@ namespace ovb {
         bool                         enabled{true};
 
         // Capture configuration (filled in Inspector before clicking Attach)
+        char     bind_host[64]{"0.0.0.0"};   // local IP to bind (UDP/TCP listen)
         uint16_t bind_port{9000};
         char     target_host[64]{"127.0.0.1"};
         uint16_t target_port{0};

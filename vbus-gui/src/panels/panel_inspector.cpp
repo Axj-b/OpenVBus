@@ -47,18 +47,22 @@ void panels::Inspector(Context &ctx) {
             ImGui::Combo("Type", &s_sel, "UDP\0TCP proxy\0Mock\0");
 
             if (s_sel == 0) {  // UDP
-                ImGui::InputScalar("Bind port", ImGuiDataType_U16, &bus->bind_port);
+                ImGui::InputText("Bind host##udp", bus->bind_host, sizeof(bus->bind_host));
+                ImGui::InputScalar("Bind port##udp", ImGuiDataType_U16, &bus->bind_port);
                 if (ImGui::Button("Attach UDP")) {
-                    InterfaceDesc d{"UDP :" + std::to_string(bus->bind_port), "udp"};
+                    InterfaceDesc d{
+                        "UDP " + std::string(bus->bind_host) + ":" + std::to_string(bus->bind_port),
+                        "udp"};
                     ctx.m.attachIface(*bus, d);
                 }
             } else if (s_sel == 1) { // TCP proxy
+                ImGui::InputText("Bind host##tcp", bus->bind_host, sizeof(bus->bind_host));
                 ImGui::InputScalar("Bind port##tcp",  ImGuiDataType_U16, &bus->bind_port);
                 ImGui::InputText("Target host", bus->target_host, sizeof(bus->target_host));
                 ImGui::InputScalar("Target port", ImGuiDataType_U16, &bus->target_port);
                 if (ImGui::Button("Attach TCP proxy")) {
                     InterfaceDesc d{
-                        "TCP :" + std::to_string(bus->bind_port) +
+                        "TCP " + std::string(bus->bind_host) + ":" + std::to_string(bus->bind_port) +
                         " → " + std::string(bus->target_host) + ":" + std::to_string(bus->target_port),
                         "tcp"};
                     ctx.m.attachIface(*bus, d);

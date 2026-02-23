@@ -238,16 +238,21 @@ void Model::attachIface(Bus &b, const InterfaceDesc &d) {
     std::string resp;
     if (d.driver == "udp") {
         m_daemon.sendCmd(
-            "capture-udp " + b.name + " " + std::to_string(b.bind_port), resp);
-        addLog("[capture] UDP port " + std::to_string(b.bind_port) +
+            "capture-udp " + b.name +
+            " " + std::string(b.bind_host) +
+            " " + std::to_string(b.bind_port), resp);
+        addLog("[capture] UDP " + std::string(b.bind_host) + ":" +
+               std::to_string(b.bind_port) +
                " on '" + b.name + "' → " + resp);
     } else if (d.driver == "tcp") {
         m_daemon.sendCmd(
             "capture-tcp " + b.name +
+            " " + std::string(b.bind_host) +
             " " + std::to_string(b.bind_port) +
             " " + std::string(b.target_host) +
             " " + std::to_string(b.target_port), resp);
-        addLog("[capture] TCP proxy " + std::to_string(b.bind_port) +
+        addLog("[capture] TCP proxy " + std::string(b.bind_host) + ":" +
+               std::to_string(b.bind_port) +
                " → " + std::string(b.target_host) + ":" +
                std::to_string(b.target_port) +
                " on '" + b.name + "' → " + resp);
