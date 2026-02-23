@@ -94,7 +94,23 @@ void panels::Inspector(Context &ctx) {
             ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "● REC");
         }
     }
-
+    // ── Forward (UDP output) ──────────────────────────────────────────────────
+    if (ImGui::CollapsingHeader("Forward (UDP out)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::InputText("Dest host##fwd", bus->forward_host, sizeof(bus->forward_host));
+        ImGui::InputScalar("Dest port##fwd", ImGuiDataType_U16, &bus->forward_port);
+        if (!bus->forwarding) {
+            if (ImGui::Button("Start forwarding"))
+                ctx.m.startForward(*bus);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, {0.2f, 0.6f, 0.2f, 1.f});
+            if (ImGui::Button("Stop forwarding"))
+                ctx.m.stopForward(*bus);
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextColored({0.4f, 1.f, 0.4f, 1.f}, "► FWD");
+        }
+        ImGui::TextDisabled("Every frame on the bus is sent as a UDP datagram to dest.");
+    }
     // ── Replay ───────────────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader("Replay")) {
         static int s_mode = 0; // 0=exact, 1=burst, 2=scale

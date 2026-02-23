@@ -347,27 +347,52 @@ static int run_recv(uint16_t port) {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port        = htons(port);
 
-    int reuse = 1;
-    setsockopt(udp, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
-    setsockopt(tcp, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
-
     int rcvbuf = 8 * 1024 * 1024;
     setsockopt(udp, SOL_SOCKET, SO_RCVBUF, (const char*)&rcvbuf, sizeof(rcvbuf));
-    setsockopt(tcp, SOL_SOCKET, SO_RCVBUF, (const char*)&rcvbuf, sizeof(rcvbuf));
 
-    bind(udp, (sockaddr*)&addr, sizeof(addr));
-    bind(tcp, (sockaddr*)&addr, sizeof(addr));
-    listen(tcp, 1);
+    // Do NOT set SO_REUSEADDR on the UDP socket.
+    // On Windows, SO_REUSEADDR lets bind() silently succeed even when another
+    // process already owns the port — the OS just delivers datagrams to the
+    // first binder and we get nothing.  Without the flag, bind() correctly
+    // returns WSAEADDRINUSE (10048) when the port is taken.
+    //
+    // TCP only needs SO_REUSEADDR so the listener can restart quickly.
+    int reuse = 1;
+    setsockopt(tcp, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
+    setsockopt(tcp, SOL_SOCKET, SO_RCVBUF,    (const char*)&rcvbuf, sizeof(rcvbuf));
 
-    std::printf("Passive sink on port %u (UDP + TCP). Press Ctrl-C to stop.\n", port);
+    if (bind(udp, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        int e = WSAGetLastError();
+        std::fprintf(stderr,
+            "ERROR: UDP bind on port %u failed (WSA error %d).\n"
+            "  Is vbusd already capturing on this port? (capture-udp)\n"
+            "  Stop the capture first, or use a different port.\n",
+            port, e);
+        closesocket(udp);
+        closesocket(tcp);
+        return 1;
+    }
+    if (bind(tcp, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        // TCP bind failure is non-fatal for a UDP-only test; warn but continue.
+        std::fprintf(stderr,
+            "WARNING: TCP bind on port %u failed (WSA error %d) – TCP sink disabled.\n",
+            port, WSAGetLastError());
+        closesocket(tcp);
+        tcp = INVALID_SOCKET;
+    } else {
+        listen(tcp, 1);
+    }
+
+    std::printf("Passive sink on port %u (UDP%s). Press Ctrl-C to stop.\n",
+                port, tcp != INVALID_SOCKET ? " + TCP" : " only");
 
     Stats st;
     std::thread rep([&]{ reporter_thread(st, "RECV"); });
 
-    std::vector<char> buf(65536);
-
+    // Each thread gets its own buffer to avoid data races.
     // UDP receive thread
     std::thread udp_t([&]() {
+        std::vector<char> buf(65536);
         sockaddr_in src{};
         int srclen = sizeof(src);
         // Set 500ms timeout so stop flag is checked
@@ -385,6 +410,8 @@ static int run_recv(uint16_t port) {
 
     // TCP accept thread
     std::thread tcp_t([&]() {
+        if (tcp == INVALID_SOCKET) return; // TCP bind failed, nothing to do
+        std::vector<char> buf(65536);
         // Non-blocking accept via select
         while (!g_stop.load()) {
             fd_set rd;

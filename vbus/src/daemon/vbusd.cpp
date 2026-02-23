@@ -20,6 +20,7 @@
 #include "../taps/recorder.h"
 #include "../net/udp_endpoint.h"
 #include "../net/tcp_proxy.h"
+#include "../net/udp_sink.h"
 
 using namespace vbus;
 
@@ -34,8 +35,9 @@ struct SubInfo {
 
 struct BusWrap {
     std::unique_ptr<IBus>             bus;
-    std::unique_ptr<Recorder>         rec;
+    std::shared_ptr<Recorder>         rec;  // shared_ptr: scheduler lambdas keep it alive
     std::unique_ptr<ICaptureEndpoint> cap;
+    std::unique_ptr<UdpSink>          sink; // immediate-forward, bypasses scheduler
     std::shared_ptr<SubInfo>          sub{std::make_shared<SubInfo>()};
 };
 
@@ -50,11 +52,14 @@ static std::mutex              g_shutdown_mtx;
 static std::condition_variable g_shutdown_cv;
 
 static void detachRecorder(BusWrap &w) {
-    w.rec.reset();
+    // Clear callbacks FIRST so no new frames are routed to the recorder.
+    // The scheduler may still have pending lambdas that captured a shared_ptr
+    // copy of w.rec – those will keep the Recorder alive until they fire.
     if (auto *eth = dynamic_cast<EthHub *>(w.bus.get()))
         eth->SetRecordCb(nullptr);
     if (auto *can = dynamic_cast<CanBus *>(w.bus.get()))
         can->SetRecordCb(nullptr);
+    w.rec.reset(); // release our ownership; lambdas in flight still hold theirs
 }
 
 // Attach a live-stream subscriber: every frame delivered on the bus is written
@@ -102,15 +107,17 @@ static void detachSub(BusWrap &w) {
 
 static void attachRecorder(BusWrap &w, const std::string &path) {
     detachRecorder(w);
-    w.rec = std::make_unique<Recorder>();
+    w.rec = std::make_shared<Recorder>();
     if (!w.rec->Open(path)) {
         w.rec.reset();
         return;
     }
+    // Capture a shared_ptr copy so any scheduler lambda already in-flight
+    // after a subsequent detachRecorder() call still has a valid Recorder.
     if (auto *eth = dynamic_cast<EthHub *>(w.bus.get())) {
-        eth->SetRecordCb([rec = w.rec.get()](const Frame &f) { rec->Write(f); });
+        eth->SetRecordCb([rec = w.rec](const Frame &f) { rec->Write(f); });
     } else if (auto *can = dynamic_cast<CanBus *>(w.bus.get())) {
-        can->SetRecordCb([rec = w.rec.get()](const Frame &f) { rec->Write(f); });
+        can->SetRecordCb([rec = w.rec](const Frame &f) { rec->Write(f); });
     }
 }
 
@@ -161,7 +168,8 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
         if (it == g_buses.end()) { resp = "ERR no bus"; return; }
         detachSub(it->second);
         detachRecorder(it->second);
-        if (it->second.cap) { it->second.cap->stop(); it->second.cap.reset(); }
+        if (it->second.cap)  { it->second.cap->stop();  it->second.cap.reset(); }
+        if (it->second.sink) { it->second.sink.reset(); } // UdpSink::stop() in destructor
         g_buses.erase(it);
         resp = "OK deleted";
         return;
@@ -346,6 +354,33 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
         if (it == g_buses.end()) { resp = "ERR no bus"; return; }
         if (it->second.cap) { it->second.cap->stop(); it->second.cap.reset(); }
         resp = "OK capture stopped";
+        return;
+    }
+
+    // ── forward-udp <name> <dsthost> <dstport>
+    //    Attaches a UDP sink: every frame delivered on the bus is sent as a
+    //    real UDP datagram to <dsthost>:<dstport>.  Use this together with
+    //    replay to push captured traffic back onto the network.
+    if (args[0] == "forward-udp" && args.size() >= 4) {
+        std::scoped_lock lk(g_mtx);
+        auto it = g_buses.find(args[1]);
+        if (it == g_buses.end()) { resp = "ERR no bus"; return; }
+        it->second.sink.reset(); // stop any existing sink first
+        uint16_t dstPort = static_cast<uint16_t>(std::stoul(args[3]));
+        auto sk = std::make_unique<UdpSink>(*it->second.bus, args[2], dstPort);
+        if (!sk->start()) { resp = "ERR forward failed"; return; }
+        it->second.sink = std::move(sk);
+        resp = "OK forwarding udp";
+        return;
+    }
+
+    // ── stop-forward <name>
+    if (args[0] == "stop-forward" && args.size() >= 2) {
+        std::scoped_lock lk(g_mtx);
+        auto it = g_buses.find(args[1]);
+        if (it == g_buses.end()) { resp = "ERR no bus"; return; }
+        it->second.sink.reset();
+        resp = "OK forward stopped";
         return;
     }
 

@@ -13,10 +13,16 @@ namespace vbus {
         void Disconnect(IEndpoint *ep) override;
         void Send(IEndpoint *src, Frame f) override;
         void SetRecordCb(std::function<void(const Frame &)> cb) {
+            std::scoped_lock lk(m_Mtx);
             m_Rec_cb = std::move(cb);
         }
         void SetSubCb(std::function<void(const Frame &)> cb) {
+            std::scoped_lock lk(m_Mtx);
             m_Sub_cb = std::move(cb);
+        }
+        void SetFwdCb(std::function<void(const Frame &)> cb) {
+            std::scoped_lock lk(m_Mtx);
+            m_Fwd_cb = std::move(cb);
         }
         const BusStats &Stats() const { return m_Stats; }
 
@@ -27,6 +33,7 @@ namespace vbus {
         uint32_t                           m_Bitrate;
         std::function<void(const Frame &)> m_Rec_cb;
         std::function<void(const Frame &)> m_Sub_cb;
+        std::function<void(const Frame &)> m_Fwd_cb;
         std::mutex                         m_Mtx;
         BusStats                           m_Stats;
     };

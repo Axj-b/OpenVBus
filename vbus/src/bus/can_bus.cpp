@@ -35,6 +35,7 @@ namespace vbus {
         std::vector<IEndpoint *> targets;
         std::function<void(const Frame &)> rec_cb;
         std::function<void(const Frame &)> sub_cb;
+        std::function<void(const Frame &)> fwd_cb;
         {
             std::scoped_lock lk(m_Mtx);
             for (auto *ep : m_EndpointList)
@@ -42,7 +43,10 @@ namespace vbus {
                     targets.push_back(ep);
             rec_cb = m_Rec_cb;
             sub_cb = m_Sub_cb;
+            fwd_cb = m_Fwd_cb;
         }
+
+        if (fwd_cb) fwd_cb(f);
 
         BusStats *stats = &m_Stats;
         m_Scheduler.post(deliverAt,

@@ -32,6 +32,7 @@ namespace vbus {
         std::vector<IEndpoint *> targets;
         std::function<void(const Frame &)> rec_cb;
         std::function<void(const Frame &)> sub_cb;
+        std::function<void(const Frame &)> fwd_cb;
         {
             std::scoped_lock lk(m_Mtx);
             for (auto *ep : m_EndpointList)
@@ -39,7 +40,12 @@ namespace vbus {
                     targets.push_back(ep);
             rec_cb = m_Rec_cb;
             sub_cb = m_Sub_cb;
+            fwd_cb = m_Fwd_cb;
         }
+
+        // Forward cb fires immediately on the caller's thread — zero scheduler
+        // latency, essential for transparent UDP/video pass-through.
+        if (fwd_cb) fwd_cb(frame);
 
         BusStats *stats = &m_Stats;
         m_Scheduler.post(deliverAt,

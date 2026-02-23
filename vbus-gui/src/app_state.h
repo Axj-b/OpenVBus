@@ -46,6 +46,11 @@ namespace ovb {
         bool recording{false};
         char record_path[256]{};
         char replay_path[256]{};
+
+        // UDP forward/output state
+        char     forward_host[64]{"127.0.0.1"};
+        uint16_t forward_port{9000};
+        bool     forwarding{false};
     };
 
     struct AppState {

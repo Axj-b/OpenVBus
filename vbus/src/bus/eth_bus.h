@@ -13,10 +13,19 @@ namespace vbus {
         void Disconnect(IEndpoint *ep) override;
         void Send(IEndpoint *src, Frame f) override;
         void SetRecordCb(std::function<void(const Frame &)> cb) {
+            std::scoped_lock lk(m_Mtx);
             m_Rec_cb = std::move(cb);
         }
         void SetSubCb(std::function<void(const Frame &)> cb) {
+            std::scoped_lock lk(m_Mtx);
             m_Sub_cb = std::move(cb);
+        }
+        // SetFwdCb: fires immediately on the Send() caller's thread,
+        // BEFORE the scheduler delay. Use for transparent forwarding where
+        // scheduler latency/jitter would corrupt the stream (e.g. UDP video).
+        void SetFwdCb(std::function<void(const Frame &)> cb) {
+            std::scoped_lock lk(m_Mtx);
+            m_Fwd_cb = std::move(cb);
         }
         const BusStats &Stats() const { return m_Stats; }
 
@@ -27,6 +36,7 @@ namespace vbus {
         uint64_t                           m_Link_bps;
         std::function<void(const Frame &)> m_Rec_cb;
         std::function<void(const Frame &)> m_Sub_cb;
+        std::function<void(const Frame &)> m_Fwd_cb;
         std::mutex                         m_Mtx;
         BusStats                           m_Stats;
     };

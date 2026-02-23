@@ -33,10 +33,9 @@ bool UdpEndpoint::start() {
         return false;
     }
 
-    // Allow address reuse
-    int opt = 1;
-    ::setsockopt(m_Sock, SOL_SOCKET, SO_REUSEADDR,
-                 reinterpret_cast<const char *>(&opt), sizeof(opt));
+    // Do NOT set SO_REUSEADDR: on Windows it would silently allow another
+    // process to bind the same port and steal (or share) datagrams.
+    // If the port is already taken, bind() will correctly fail instead.
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;

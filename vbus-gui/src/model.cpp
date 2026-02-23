@@ -322,7 +322,30 @@ void Model::replayFile(Bus &b, const std::string &mode) {
 }
 
 // ─── Log ──────────────────────────────────────────────────────────────────────
+// ─── UDP Forward ──────────────────────────────────────────────────────────────────
 
+void Model::startForward(Bus &b) {
+    if (!state.daemon_connected) {
+        addLog("[fwd] daemon not connected"); return;
+    }
+    std::string resp;
+    m_daemon.sendCmd(
+        "forward-udp " + b.name +
+        " " + std::string(b.forward_host) +
+        " " + std::to_string(b.forward_port), resp);
+    b.forwarding = (resp.rfind("OK", 0) == 0);
+    addLog("[fwd] start '" + b.name + "' → " +
+           std::string(b.forward_host) + ":" + std::to_string(b.forward_port) +
+           " → " + resp);
+}
+
+void Model::stopForward(Bus &b) {
+    if (!state.daemon_connected) return;
+    std::string resp;
+    m_daemon.sendCmd("stop-forward " + b.name, resp);
+    b.forwarding = false;
+    addLog("[fwd] stop '" + b.name + "' → " + resp);
+}
 void Model::addLog(const std::string &msg) {
     char prefix[32];
     std::snprintf(prefix, sizeof(prefix), "[%08.3f] ", m_tick_ns / 1e9);

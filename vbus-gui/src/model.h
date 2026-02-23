@@ -25,6 +25,8 @@ class Model {
     void                       startRecord(Bus &b);
     void                       stopRecord(Bus &b);
     void                       replayFile(Bus &b, const std::string &mode);
+    void                       startForward(Bus &b);
+    void                       stopForward(Bus &b);
     void                       addLog(const std::string &msg);
 
   private:
