@@ -35,6 +35,9 @@ target_link_libraries(vbusd PRIVATE vbus_core)
 add_executable(vbusctl src/cli/vbusctl.cpp "src/core/core.h")
 target_link_libraries(vbusctl PRIVATE vbus_core)
 
+add_executable(vbus_bench src/cli/vbus_bench.cpp)
+target_include_directories(vbus_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 add_library(vbus_client SHARED
   src/client/vbus_client.h
   src/client/vbus_client.cpp
@@ -45,5 +48,6 @@ target_link_libraries(vbus_client PRIVATE vbus_core)
 if(WIN32)
   target_link_libraries(vbusd PRIVATE ws2_32)
   target_link_libraries(vbusctl PRIVATE ws2_32)
+  target_link_libraries(vbus_bench PRIVATE ws2_32)
   target_link_libraries(vbus_client PRIVATE ws2_32)
 endif()

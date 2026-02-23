@@ -157,6 +157,39 @@ Opens a `.vbuscap` file and replays every `Proto::UDP` frame as a real UDP datag
 
 Response: `OK replayed udp` or `ERR ...`
 
+#### `replay-sync <mode> <file1> <host1> <port1> [<file2> <host2> <port2> ...]`
+
+Replays **multiple `.vbuscap` files simultaneously** as UDP datagrams, preserving the exact inter-stream timing as originally captured.
+
+All streams share a single global time origin: the minimum `Ts_ns` found across all capture files. Playback begins ~50 ms after the command is acknowledged, giving every worker thread time to reach the start barrier together.
+
+Only `Proto::UDP` frames are replayed; all other frame types are silently skipped.
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `mode` | string | `exact`, `burst`, or `scale:K` where K is a float multiplier |
+| `file1` | path | Capture file for stream 1 |
+| `host1` | string | Destination IP for stream 1 |
+| `port1` | uint16 | Destination UDP port for stream 1 |
+| `file2…` | — | Additional streams (repeat the file/host/port triple) |
+
+**Modes:**
+
+| Mode | Behaviour |
+|------|----------|
+| `exact` | Replays at original wall-clock spacing (default) |
+| `burst` | Sends all frames as fast as possible (no timing) |
+| `scale:K` | Multiplies all inter-frame gaps by K (K < 1 = faster, K > 1 = slower) |
+
+Response: `OK sync started N streams` (immediately; background threads handle playback) or `ERR open failed: <path>`
+
+**Example — 4 video streams recorded on ports 5001–5004, replayed to another host:**
+```
+replay-sync exact v1.vbuscap 192.168.1.42 5001 v2.vbuscap 192.168.1.42 5002 v3.vbuscap 192.168.1.42 5003 v4.vbuscap 192.168.1.42 5004
+```
+
+---
+
 #### `quit`
 
 Shuts down the daemon cleanly.
@@ -219,6 +252,8 @@ while not EOF:
 | `ETH2` | 1 | IEEE 802.3 Ethernet II frame |
 | `CAN20` | 2 | CAN 2.0A/B standard/extended frame (≤ 8 byte payload) |
 | `CANFD` | 3 | CAN FD frame (≤ 64 byte payload) |
+| `UDP` | 4 | UDP datagram; Tag = `(src_ip << 32) \| (src_port << 16) \| dst_port` |
+| `TCP` | 5 | TCP relay chunk; Tag = 0 (client→server) or 1 (server→client) |
 
 ---
 

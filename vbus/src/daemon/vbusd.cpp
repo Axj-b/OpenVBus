@@ -394,6 +394,98 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
         return;
     }
 
+    // ── replay-sync <mode> <file1> <host1> <port1> [<file2> <host2> <port2> ...]
+    //
+    // Replays multiple .vbuscap files simultaneously as UDP datagrams.
+    // All streams share a single time origin (global minimum Ts_ns across all
+    // files) so inter-stream timing is preserved exactly as captured.
+    //
+    // mode = exact | burst | scale:K
+    // Each stream is described by 3 arguments: <capturefile> <desthost> <destport>
+    // Minimum: one stream → 5 args total.
+    if (args[0] == "replay-sync" && args.size() >= 5 && (args.size() - 2) % 3 == 0) {
+        const std::string &mode = args[1];
+
+        bool   do_timing = (mode != "burst");
+        double scale     = 1.0;
+        if (mode.rfind("scale:", 0) == 0) {
+            try { scale = std::stod(mode.substr(6)); }
+            catch (...) { resp = "ERR bad scale"; return; }
+        }
+
+        struct StreamDesc { std::string file, host; uint16_t port; };
+        std::vector<StreamDesc> streams;
+        for (size_t i = 2; i + 3 <= args.size(); i += 3) {
+            StreamDesc sd;
+            sd.file = args[i];
+            sd.host = args[i + 1];
+            sd.port = static_cast<uint16_t>(std::stoul(args[i + 2]));
+            streams.push_back(std::move(sd));
+        }
+
+        // ── Phase 1: validate all files and find global first timestamp ──────
+        uint64_t global_first_ts = UINT64_MAX;
+        for (auto &sd : streams) {
+            Replayer peek;
+            if (!peek.Open(sd.file)) {
+                resp = "ERR open failed: " + sd.file;
+                return;
+            }
+            Frame f;
+            if (peek.Next(f) && f.Ts_ns > 0 && f.Ts_ns < global_first_ts)
+                global_first_ts = f.Ts_ns;
+        }
+        if (global_first_ts == UINT64_MAX) global_first_ts = 0;
+
+        // ── Phase 2: launch one thread per stream, all aligned to the same ───
+        //            wall-clock start point (50 ms from now for startup slack).
+        const uint64_t replay_start = static_cast<uint64_t>(g_clk.Now().count())
+                                      + 50'000'000ULL; // +50 ms
+
+        for (auto sd : streams) {
+            std::thread([sd, global_first_ts, replay_start, do_timing, scale]() {
+                Replayer rep;
+                if (!rep.Open(sd.file)) return;
+
+                SOCKET sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                if (sock == INVALID_SOCKET) return;
+
+                int sndbuf = 4 * 1024 * 1024;
+                ::setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
+                             reinterpret_cast<const char *>(&sndbuf), sizeof(sndbuf));
+
+                sockaddr_in dst{};
+                dst.sin_family = AF_INET;
+                dst.sin_port   = htons(sd.port);
+                inet_pton(AF_INET, sd.host.c_str(), &dst.sin_addr);
+
+                // Wait for the shared start time
+                while (static_cast<uint64_t>(g_clk.Now().count()) < replay_start)
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+
+                Frame f;
+                while (rep.Next(f)) {
+                    if (f.Proto != Proto::UDP) continue;
+                    if (do_timing) {
+                        uint64_t offset_ns = static_cast<uint64_t>(
+                            static_cast<double>(f.Ts_ns - global_first_ts) * scale);
+                        uint64_t fire_at = replay_start + offset_ns;
+                        while (static_cast<uint64_t>(g_clk.Now().count()) < fire_at)
+                            std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    }
+                    ::sendto(sock,
+                             reinterpret_cast<const char *>(f.Payload.data()),
+                             static_cast<int>(f.Payload.size()), 0,
+                             reinterpret_cast<const sockaddr *>(&dst), sizeof(dst));
+                }
+                closesocket(sock);
+            }).detach();
+        }
+
+        resp = "OK sync started " + std::to_string(streams.size()) + " streams";
+        return;
+    }
+
     // ── subscribe <name>  – keeps this pipe connection open; streams frames
     if (args[0] == "subscribe" && args.size() >= 2) {
         std::scoped_lock lk(g_mtx);
