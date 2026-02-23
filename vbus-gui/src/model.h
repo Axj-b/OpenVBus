@@ -24,6 +24,9 @@ class Model {
     void                       detachIface(Bus &b);
     void                       startRecord(Bus &b);
     void                       stopRecord(Bus &b);
+    void                       startRecordAll();
+    void                       stopRecordAll();
+    void                       startReplayAll();
     void                       replayFile(Bus &b, const std::string &mode);
     void                       startForward(Bus &b);
     void                       stopForward(Bus &b);

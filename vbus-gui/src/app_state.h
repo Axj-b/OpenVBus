@@ -60,6 +60,15 @@ namespace ovb {
         bool                     request_exit{false};
         bool                     daemon_connected{false};
         std::vector<std::string> log_lines;
+
+        // Global record-all state
+        char record_all_prefix[256]{"capture"}; // files: {prefix}_{busname}.vbuscap
+        bool global_recording{false};
+
+        // Global replay-all state
+        char replay_all_mode[16]{"exact"};  // exact | burst | scale
+        float replay_all_scale{1.0f};       // used when mode == "scale"
+        bool  global_replaying{false};
     };
 
 } // namespace ovb

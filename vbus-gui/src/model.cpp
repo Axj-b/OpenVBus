@@ -304,6 +304,66 @@ void Model::stopRecord(Bus &b) {
     b.recording = false;
     addLog("[rec] stop '" + b.name + "' → " + resp);
 }
+void Model::startRecordAll() {
+    if (!state.daemon_connected) {
+        addLog("[rec-all] daemon not connected"); return;
+    }
+    bool any = false;
+    for (auto &b : state.buses) {
+        // Build per-bus path: prefix_busname.vbuscap
+        std::string path = std::string(state.record_all_prefix)
+                           + "_" + b.name + ".vbuscap";
+        // Copy into the bus record_path so the inspector shows it too
+        std::snprintf(b.record_path, sizeof(b.record_path), "%s", path.c_str());
+        std::string resp;
+        m_daemon.sendCmd("record " + b.name + " on " + path, resp);
+        b.recording = (resp.rfind("OK", 0) == 0);
+        addLog("[rec-all] '" + b.name + "' -> " + resp);
+        if (b.recording) any = true;
+    }
+    state.global_recording = any;
+}
+
+void Model::stopRecordAll() {
+    for (auto &b : state.buses) {
+        if (!b.recording) continue;
+        std::string resp;
+        m_daemon.sendCmd("stoprec " + b.name, resp);
+        b.recording = false;
+        addLog("[rec-all] stop '" + b.name + "' -> " + resp);
+    }
+    state.global_recording = false;
+}
+void Model::startReplayAll() {
+    if (!state.daemon_connected) {
+        addLog("[replay-all] daemon not connected"); return;
+    }
+    // Build: replay-sync <mode> file1 host1 port1 file2 host2 port2 ...
+    // mode for daemon: exact | burst | scale:K
+    std::string daemonMode = state.replay_all_mode;
+    if (daemonMode == "scale") {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "scale:%.3f", state.replay_all_scale);
+        daemonMode = buf;
+    }
+    std::string cmd = "replay-sync " + daemonMode;
+    int streamCount = 0;
+    for (auto &b : state.buses) {
+        if (b.record_path[0] == '\0') continue;
+        if (b.forward_host[0] == '\0' || b.forward_port == 0) continue;
+        cmd += " " + std::string(b.record_path);
+        cmd += " " + std::string(b.forward_host);
+        cmd += " " + std::to_string(b.forward_port);
+        ++streamCount;
+    }
+    if (streamCount == 0) {
+        addLog("[replay-all] no buses with record file + forward destination set"); return;
+    }
+    std::string resp;
+    m_daemon.sendCmd(cmd, resp);
+    state.global_replaying = true;
+    addLog("[replay-all] " + std::to_string(streamCount) + " stream(s) -> " + resp);
+}
 
 void Model::replayFile(Bus &b, const std::string &mode) {
     if (!state.daemon_connected) {
