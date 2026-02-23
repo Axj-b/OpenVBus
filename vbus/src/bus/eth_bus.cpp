@@ -18,15 +18,41 @@ namespace vbus {
     }
 
     void EthHub::Send(IEndpoint *src, Frame frame) {
-        // MVP: immediate delivery. TODO: serialization delay using link_bps.
         frame.Proto = Proto::ETH2;
-        frame.Ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(m_Clock.Now()).count();
-        if (m_Rec_cb)
-            m_Rec_cb(frame);
-        std::scoped_lock lk(m_Mtx);
-        for (auto *ep : m_EndpointList)
-            if (ep != src)
-                ep->On_rx(frame);
+        frame.Ts_ns = m_Clock.Now().count();
+
+        // Serialization delay: (payload + 18-byte Ethernet framing) * 8 bits / link_bps
+        const uint64_t bits      = (frame.Payload.size() + 18) * 8;
+        const SimTime  delay     = SimTime(m_Link_bps > 0 ? bits * 1'000'000'000ULL / m_Link_bps : 0);
+        const SimTime  deliverAt = m_Clock.Now() + delay;
+
+        m_Stats.Tx_frames.fetch_add(1, std::memory_order_relaxed);
+
+        // Capture destination list and callbacks under lock, then schedule delivery.
+        std::vector<IEndpoint *> targets;
+        std::function<void(const Frame &)> rec_cb;
+        std::function<void(const Frame &)> sub_cb;
+        {
+            std::scoped_lock lk(m_Mtx);
+            for (auto *ep : m_EndpointList)
+                if (ep != src)
+                    targets.push_back(ep);
+            rec_cb = m_Rec_cb;
+            sub_cb = m_Sub_cb;
+        }
+
+        BusStats *stats = &m_Stats;
+        m_Scheduler.post(deliverAt,
+            [targets = std::move(targets), frame = std::move(frame), rec_cb = std::move(rec_cb), sub_cb = std::move(sub_cb), stats]() {
+                if (rec_cb)
+                    rec_cb(frame);
+                if (sub_cb)
+                    sub_cb(frame);
+                for (auto *ep : targets) {
+                    ep->On_rx(frame);
+                    stats->Rx_frames.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
     }
 
 } // namespace vbus

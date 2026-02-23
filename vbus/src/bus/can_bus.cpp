@@ -5,7 +5,7 @@
 namespace vbus {
 
     CanBus::CanBus(Scheduler &s, Clock &c, uint32_t br)
-        : M_Scheduler(s), m_Clock(c), m_Bitrate(br) {}
+        : m_Scheduler(s), m_Clock(c), m_Bitrate(br) {}
 
     void CanBus::Connect(IEndpoint *ep) {
         std::scoped_lock lk(m_Mtx);
@@ -18,15 +18,44 @@ namespace vbus {
     }
 
     void CanBus::Send(IEndpoint *src, Frame f) {
-        // MVP: immediate broadcast. TODO: proper arbitration and timing.
-        f.Proto = Proto::CAN20;
-        f.Ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(m_Clock.Now()).count();
-        if (m_Rec_cb)
-            m_Rec_cb(f);
-        std::scoped_lock lk(m_Mtx);
-        for (auto *ep : m_EndpointList)
-            if (ep != src)
-                ep->On_rx(f);
+        // CAN 2.0 frame bit count: SOF(1) + ID(11) + ctrl(6) + data(N*8) + CRC(16) + ACK(2) + EOF(7) = 43 + N*8
+        // CAN FD: use extended count; approximate with 67 + N*8 for DLC.
+        const bool     isFD      = (f.Proto == Proto::CANFD);
+        const uint64_t dataBits  = f.Payload.size() * 8;
+        const uint64_t frameBits = (isFD ? 67ULL : 43ULL) + dataBits;
+        const SimTime  delay     = SimTime(m_Bitrate > 0 ? frameBits * 1'000'000'000ULL / m_Bitrate : 0);
+        const SimTime  deliverAt = m_Clock.Now() + delay;
+
+        if (f.Proto != Proto::CANFD)
+            f.Proto = Proto::CAN20;
+        f.Ts_ns = m_Clock.Now().count();
+
+        m_Stats.Tx_frames.fetch_add(1, std::memory_order_relaxed);
+
+        std::vector<IEndpoint *> targets;
+        std::function<void(const Frame &)> rec_cb;
+        std::function<void(const Frame &)> sub_cb;
+        {
+            std::scoped_lock lk(m_Mtx);
+            for (auto *ep : m_EndpointList)
+                if (ep != src)
+                    targets.push_back(ep);
+            rec_cb = m_Rec_cb;
+            sub_cb = m_Sub_cb;
+        }
+
+        BusStats *stats = &m_Stats;
+        m_Scheduler.post(deliverAt,
+            [targets = std::move(targets), f = std::move(f), rec_cb = std::move(rec_cb), sub_cb = std::move(sub_cb), stats]() {
+                if (rec_cb)
+                    rec_cb(f);
+                if (sub_cb)
+                    sub_cb(f);
+                for (auto *ep : targets) {
+                    ep->On_rx(f);
+                    stats->Rx_frames.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
     }
 
 } // namespace vbus

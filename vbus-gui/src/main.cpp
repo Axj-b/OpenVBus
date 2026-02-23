@@ -48,7 +48,7 @@ int main() {
 
     double last = glfwGetTime();
 
-    while (!glfwWindowShouldClose(window)) {
+    while (!glfwWindowShouldClose(window) && !state.request_exit) {
         glfwPollEvents();
         double now = glfwGetTime();
         model.tick(now - last);

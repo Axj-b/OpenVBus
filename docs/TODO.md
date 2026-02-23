@@ -6,49 +6,48 @@ Tasks are grouped by component and ordered by priority. Each item links to the a
 
 ## 🔴 Bugs (broken today)
 
-- [ ] **stoprec command missing from daemon**
-  `handle_cmd` only handles `record <name> off`; `stoprec <name>` hits `ERR cmd`.
+- [x] **stoprec command missing from daemon**
+  Added as direct alias that calls `detachRecorder()`.
   → `vbus/src/daemon/vbusd.cpp`
 
-- [ ] **Replay timing origin mismatch**
-  `exact` mode compares capture-epoch absolute timestamps against the daemon's `RealtimeClock` which starts at 0 on launch. Should compute inter-frame deltas, not compare absolute values.
-  → `vbus/src/daemon/vbusd.cpp` (replay block)
-
-- [ ] **Replay `scale:K` not parsed**
-  Only `mode == "exact"` is checked; `burst` and `scale:K` are silent no-ops (fallthrough).
-  → `vbus/src/daemon/vbusd.cpp` (replay block)
-
-- [ ] **`quit` calls `ExitProcess(0)` — no cleanup**
-  Open `Recorder` files may not be flushed; pipe threads are not joined.
-  Replace with a shutdown flag + condition variable.
+- [x] **Replay timing origin mismatch**
+  Fixed: now uses inter-frame deltas (`f.Ts_ns - first_cap_ts`) relative to `replay_start`.
   → `vbus/src/daemon/vbusd.cpp`
 
-- [ ] **Packet timestamps not monotonic in GUI mock**
-  `p.timestamp_ns += dt * 1e9` increments from 0 on every new `Packet` struct. Need a global accumulator in `Model::tick()`.
-  → `vbus-gui/src/model.cpp`
+- [x] **Replay `scale:K` not parsed**
+  `burst` skips all timing; `scale:K` multiplies each offset by `K`.
+  → `vbus/src/daemon/vbusd.cpp`
 
-- [ ] **Filter rules never applied**
-  `Bus::filters` is populated by the filter panel but `Model::tick()` ignores every rule entirely.
+- [x] **`quit` calls `ExitProcess(0)` — no cleanup**
+  Replaced with `g_shutdown` atomic flag + `condition_variable`; recorders are flushed before exit.
+  → `vbus/src/daemon/vbusd.cpp`
+
+- [x] **Packet timestamps not monotonic in GUI mock**
+  Added `m_tick_ns` accumulator to `Model`; all packets get `timestamp_ns = m_tick_ns`.
+  → `vbus-gui/src/model.h`, `vbus-gui/src/model.cpp`
+
+- [x] **Filter rules never applied**
+  Added `glob_match()` and `passes_filters()` in `Model::tick()`; packets that fail exclude/include rules are dropped from the ring.
   → `vbus-gui/src/model.cpp`
 
 ---
 
 ## 🟠 Core — must work for the platform to be meaningful
 
-- [ ] **Wire Scheduler into EthHub delivery**
-  Replace immediate synchronous delivery in `EthHub::Send` with `m_Scheduler.post(now + delay, fn)` where `delay = payload_bytes * 8 / link_bps`.
+- [x] **Wire Scheduler into EthHub delivery**
+  Serialization delay = `(payload + 18) * 8 / link_bps` ns; frame delivered via `m_Scheduler.post()`.
   → `vbus/src/bus/eth_bus.cpp`
 
-- [ ] **Wire Scheduler into CanBus delivery**
-  Same as above: `delay = frame_bits / bitrate` (11 + 8·N + 3 overhead bits for CAN 2.0).
+- [x] **Wire Scheduler into CanBus delivery**
+  Frame bit count = `43 + N*8` (CAN 2.0) or `67 + N*8` (CAN FD); delivered via `m_Scheduler.post()`.
   → `vbus/src/bus/can_bus.cpp`
 
-- [ ] **Add mutex to Scheduler**
-  Pipe handler threads will call `bus->Send()` → `scheduler.post()` concurrently while the main loop calls `run_until()`. Add a `std::mutex` to `Scheduler`.
+- [x] **Add mutex to Scheduler**
+  `post()` and `run_until()`/`run()` now hold `m_mtx`; callbacks drained to local vector before firing.
   → `vbus/src/core/scheduler.h`, `vbus/src/core/scheduler.cpp`
 
-- [ ] **Add `delete <name>` command to daemon**
-  Bus map grows forever; no way to tear down a bus. Detach recorder, erase from `g_buses`.
+- [x] **Add `delete <name>` command to daemon**
+  Detaches recorder, erases from `g_buses`.
   → `vbus/src/daemon/vbusd.cpp`
 
 - [ ] **Connect GUI to vbusd control pipe**
@@ -59,20 +58,20 @@ Tasks are grouped by component and ordered by priority. Each item links to the a
 
 ## 🟡 Features — needed for a complete first release
 
-- [ ] **Populate BusStats in EthHub and CanBus**
-  Add a `BusStats` member to each bus; increment `Tx_frames` on `Send`, `Rx_frames` on each `On_rx` delivery, `Drops` when an endpoint queue is full (future).
+- [x] **Populate BusStats in EthHub and CanBus**
+  `Tx_frames` incremented on `Send`; `Rx_frames` incremented per endpoint delivery inside the scheduled callback.
   → `vbus/src/bus/eth_bus.h/.cpp`, `vbus/src/bus/can_bus.h/.cpp`
 
-- [ ] **Add `stats <name>` command to daemon**
-  Expose `BusStats` over the control pipe so CLI and GUI can display live counters.
+- [x] **Add `stats <name>` command to daemon**
+  Returns `tx=N rx=N drops=N` from `BusStats`.
   → `vbus/src/daemon/vbusd.cpp`
 
-- [ ] **CAN FD send path**
-  Add `send-canfd <name> <id> <hex>` command (sets `Proto::CANFD`, validates payload ≤ 64 bytes). Add CAN FD bitrate field to `CanBus` constructor.
-  → `vbus/src/daemon/vbusd.cpp`, `vbus/src/bus/can_bus.h/.cpp`
+- [x] **CAN FD send path**
+  Added `send-canfd <name> <id> <hex>` command; sets `Proto::CANFD`, validates payload ≤ 64 bytes. `CanBus::Send` uses extended bit-count for FD frames.
+  → `vbus/src/daemon/vbusd.cpp`, `vbus/src/bus/can_bus.cpp`
 
-- [ ] **CAN 2.0 payload size validation**
-  `send-can` should reject payloads > 8 bytes with `ERR payload too long`.
+- [x] **CAN 2.0 payload size validation**
+  `send-can` now rejects payloads > 8 bytes with an error response.
   → `vbus/src/daemon/vbusd.cpp`
 
 - [ ] **Real VLAN splitter tap**
@@ -105,6 +104,34 @@ Tasks are grouped by component and ordered by priority. Each item links to the a
 ---
 
 ## ⚪ Polish / Quality
+
+- [x] **GUI: `InputText` UB on `std::string::data()`**
+  Inspector and Filters now use `char[128]` buffers sync'd back to `std::string`.
+  → `panel_inspector.cpp`, `panel_filters.cpp`
+
+- [x] **GUI: duplicate stale filter evaluator in Packets panel**
+  Removed `pass()` and per-packet filter loop; ring already contains only filtered packets.
+  → `panel_packets.cpp`
+
+- [x] **GUI: Log panel always printed "Startup OK"**
+  Added `AppState::log_lines`; `Model` emits timestamped entries on create/delete bus and iface attach/detach. Log panel shows scrolling entries with Clear button.
+  → `app_state.h`, `model.h/.cpp`, `panel_log.cpp`
+
+- [x] **GUI: VLAN panel was a static stub**
+  Now counts packets per VLAN from the live ring and displays them in a sorted scrollable list.
+  → `panel_vlan.cpp`
+
+- [x] **GUI: Bus List had no delete button**
+  Added an X `SmallButton` next to each bus entry.
+  → `panel_bus_list.cpp`
+
+- [x] **GUI: "Exit" menu item did nothing**
+  Sets `AppState::request_exit`; `main.cpp` checks it in the render loop condition.
+  → `imgui_layer.cpp`, `main.cpp`
+
+- [x] **GUI: iface `start()`/`stop()` never called**
+  `Model::attachIface()` calls `iface::make()` + `start()`; `Model::detachIface()` calls `stop()`. Inspector calls these instead of directly mutating `bus->iface`.
+  → `model.h/.cpp`, `panel_inspector.cpp`
 
 - [ ] **Replace all `TODO` comments in source with links back here**
 - [ ] **Add unit tests for Scheduler (fire order, concurrent post)**

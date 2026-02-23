@@ -22,6 +22,9 @@ add_library(vbus_core
   src/bus/can_bus.h src/bus/can_bus.cpp
   src/taps/recorder.h src/taps/recorder.cpp
   src/taps/stats.h
+  src/net/capture_base.h
+  src/net/udp_endpoint.h  src/net/udp_endpoint.cpp
+  src/net/tcp_proxy.h     src/net/tcp_proxy.cpp
  "src/core/core.h")
 
 target_include_directories(vbus_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)

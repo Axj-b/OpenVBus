@@ -1,6 +1,7 @@
 
 #pragma once
 #include "ibus.h"
+#include "../taps/stats.h"
 #include <mutex>
 #include "../core/scheduler.h"
 namespace vbus {
@@ -14,6 +15,10 @@ namespace vbus {
         void SetRecordCb(std::function<void(const Frame &)> cb) {
             m_Rec_cb = std::move(cb);
         }
+        void SetSubCb(std::function<void(const Frame &)> cb) {
+            m_Sub_cb = std::move(cb);
+        }
+        const BusStats &Stats() const { return m_Stats; }
 
       private:
         Scheduler                         &m_Scheduler;
@@ -21,7 +26,9 @@ namespace vbus {
         EndpointList                       m_EndpointList;
         uint64_t                           m_Link_bps;
         std::function<void(const Frame &)> m_Rec_cb;
+        std::function<void(const Frame &)> m_Sub_cb;
         std::mutex                         m_Mtx;
+        BusStats                           m_Stats;
     };
 
 } // namespace vbus

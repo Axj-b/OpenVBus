@@ -32,8 +32,8 @@ void ovb::ui::DrawDockspace(Context &ctx) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("New Bus"))
                 ctx.m.newBus("Bus" + std::to_string(ctx.s.buses.size() + 1));
-            if (ImGui::MenuItem("Exit")) {
-            }
+            if (ImGui::MenuItem("Exit"))
+                ctx.s.request_exit = true;
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View")) {

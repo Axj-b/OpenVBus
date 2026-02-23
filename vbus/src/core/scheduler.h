@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 #include <cstdint>
+#include <mutex>
 #include "clock.h"
 
 namespace vbus {
@@ -23,6 +24,7 @@ private:
     };
     Clock& clk;
     std::priority_queue<Item> q;
+    std::mutex m_mtx;
 };
 
 } // namespace vbus

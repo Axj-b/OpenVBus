@@ -42,6 +42,7 @@ src/main.cpp
 #src/glad.c
 src/imgui_layer.cpp
 src/model.cpp
+src/daemon_client.cpp
 src/panels/panel_bus_list.cpp
 src/panels/panel_inspector.cpp
 src/panels/panel_filters.cpp

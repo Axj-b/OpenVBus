@@ -39,6 +39,12 @@ Creates a virtual CAN bus.
 
 Response: `OK created can` or `ERR type`
 
+#### `delete <name>`
+
+Destroys a named bus. Detaches any running recorder and removes the bus from the daemon.
+
+Response: `OK deleted` or `ERR no bus`
+
 #### `list`
 
 Returns a newline-separated list of all bus names currently managed by the daemon.
@@ -79,15 +85,33 @@ Response: `OK sent` or `ERR no bus`
 
 #### `send-can <name> <id> <hex>`
 
-Injects a CAN frame.
+Injects a CAN frame. Payload must be **≤ 8 bytes** (CAN 2.0 limit).
 
 | Argument | Type | Description |
 |----------|------|-------------|
 | `name` | string | Bus name |
-| `id` | uint32 (decimal) | CAN frame identifier (11-bit or 29-bit) |
-| `hex` | hex string | Frame payload (max 8 bytes for CAN 2.0, max 64 for CAN FD) |
+| `id` | uint32 (decimal or `0x` hex) | CAN frame identifier (11-bit or 29-bit) |
+| `hex` | hex string | Frame payload (max 8 bytes) |
 
-Response: `OK sent` or `ERR no bus`
+Response: `OK sent`, `ERR payload too long (max 8 bytes for CAN 2.0)`, or `ERR no bus`
+
+#### `send-canfd <name> <id> <hex>`
+
+Injects a CAN FD frame. Payload must be **≤ 64 bytes**.
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `name` | string | Bus name |
+| `id` | uint32 (decimal or `0x` hex) | CAN FD frame identifier |
+| `hex` | hex string | Frame payload (max 64 bytes) |
+
+Response: `OK sent`, `ERR payload too long (max 64 bytes for CAN FD)`, or `ERR no bus`
+
+#### `stats <name>`
+
+Returns live frame counters for the named bus.
+
+Response: `tx=N rx=N drops=N`
 
 #### `replay <name> <file> <mode>`
 
@@ -100,6 +124,38 @@ Opens a `.vbuscap` file and injects all recorded frames into the named bus.
 | `mode` | string | `exact`, `burst`, or `scale:K` where K is a float multiplier |
 
 Response: `OK replay done` or `ERR ...`
+
+#### `capture-udp <name> <bindport>`
+
+Binds a UDP socket on `0.0.0.0:<bindport>` and forwards every received datagram into the named bus as a `Proto::UDP` frame. The frame `Tag` encodes the source address: `(src_ip_u32 << 32) | (src_port << 16) | dst_port`.
+
+Response: `OK capturing udp` or `ERR ...`
+
+#### `capture-tcp <name> <bindport> <targethost> <targetport>`
+
+Starts a transparent TCP proxy: listens on `<bindport>`, forwards connections to `<targethost>:<targetport>`, and records every relayed chunk as a `Proto::TCP` frame. `Tag=0` marks client→server data; `Tag=1` marks server→client data.
+
+Response: `OK capturing tcp` or `ERR ...`
+
+#### `stop-capture <name>`
+
+Stops any active UDP/TCP capture endpoint attached to the named bus without deleting the bus.
+
+Response: `OK capture stopped` or `ERR ...`
+
+#### `replay-udp <name> <file> <dsthost> <dstport> <mode>`
+
+Opens a `.vbuscap` file and replays every `Proto::UDP` frame as a real UDP datagram to `<dsthost>:<dstport>`. Non-UDP frames are skipped.
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `name` | string | Bus name |
+| `file` | path | Capture file |
+| `dsthost` | string | Destination IP address |
+| `dstport` | uint16 | Destination UDP port |
+| `mode` | string | `exact`, `burst`, or `scale:K` where K is a float multiplier |
+
+Response: `OK replayed udp` or `ERR ...`
 
 #### `quit`
 
@@ -134,7 +190,7 @@ Each captured frame is preceded by a record header:
 ```
 Offset  Size  Type      Field
 ──────────────────────────────────────────────
-0       1     uint8     Proto  (1=ETH2, 2=CAN20, 3=CANFD)
+0       1     uint8     Proto  (1=ETH2, 2=CAN20, 3=CANFD, 4=UDP, 5=TCP)
 1       1     uint8     Flags  (reserved, write 0)
 2       2     uint16    Reserved (write 0)
 4       8     uint64    Tag    (CAN identifier, or 0 for Ethernet)

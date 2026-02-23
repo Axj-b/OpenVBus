@@ -12,7 +12,9 @@ namespace vbus {
     enum class Proto : uint8_t {
         ETH2  = 1,
         CAN20 = 2,
-        CANFD = 3
+        CANFD = 3,
+        UDP   = 4,  // Tag = (src_ip<<32)|(src_port<<16)|dst_port
+        TCP   = 5   // Tag = direction: 0=client→server, 1=server→client
     };
 
     struct FrameView {
