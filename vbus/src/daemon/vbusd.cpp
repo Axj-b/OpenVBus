@@ -274,10 +274,11 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
     }
 
     // ── replay <name> <file> <exact|burst|scale:K>
+    // Returns immediately; replay runs in a detached thread.
     if (args[0] == "replay" && args.size() >= 4) {
-        const std::string &name = args[1], &file = args[2], &mode = args[3];
+        const std::string name = args[1], file = args[2], mode = args[3];
 
-        // Grab bus pointer without holding g_mtx for the full replay duration.
+        // Validate upfront before detaching
         IBus *busPtr = nullptr;
         {
             std::scoped_lock lk(g_mtx);
@@ -285,9 +286,7 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
             if (it == g_buses.end()) { resp = "ERR no bus"; return; }
             busPtr = it->second.bus.get();
         }
-
-        Replayer rep;
-        if (!rep.Open(file)) { resp = "ERR open"; return; }
+        { Replayer probe; if (!probe.Open(file)) { resp = "ERR open: " + file; return; } }
 
         bool   do_timing = (mode != "burst");
         double scale     = 1.0;
@@ -296,21 +295,24 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
             catch (...) { resp = "ERR bad scale"; return; }
         }
 
-        Frame    f;
-        uint64_t first_cap_ts = 0;
-        uint64_t replay_start = static_cast<uint64_t>(g_clk.Now().count());
-
-        while (rep.Next(f)) {
-            if (do_timing) {
-                if (first_cap_ts == 0) first_cap_ts = f.Ts_ns;
-                uint64_t offset_ns = static_cast<uint64_t>((f.Ts_ns - first_cap_ts) * scale);
-                uint64_t fire_at   = replay_start + offset_ns;
-                while (static_cast<uint64_t>(g_clk.Now().count()) < fire_at)
-                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::thread([busPtr, file, do_timing, scale]() {
+            Replayer rep;
+            if (!rep.Open(file)) return;
+            Frame    f;
+            uint64_t first_cap_ts = 0;
+            uint64_t replay_start = static_cast<uint64_t>(g_clk.Now().count());
+            while (rep.Next(f)) {
+                if (do_timing) {
+                    if (first_cap_ts == 0) first_cap_ts = f.Ts_ns;
+                    uint64_t offset_ns = static_cast<uint64_t>((f.Ts_ns - first_cap_ts) * scale);
+                    uint64_t fire_at   = replay_start + offset_ns;
+                    while (static_cast<uint64_t>(g_clk.Now().count()) < fire_at)
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                }
+                busPtr->Send(nullptr, f);
             }
-            busPtr->Send(nullptr, f);
-        }
-        resp = "OK replayed";
+        }).detach();
+        resp = "OK replay started";
         return;
     }
 
@@ -385,51 +387,49 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
     }
 
     // ── replay-udp <name> <file> <dsthost> <dstport> <exact|burst|scale:K>
+    // Returns immediately; replay runs in a detached thread.
     if (args[0] == "replay-udp" && args.size() >= 6) {
-        const std::string &file    = args[2];
-        const std::string &dstHost = args[3];
-        uint16_t           dstPort = static_cast<uint16_t>(std::stoul(args[4]));
-        const std::string &mode    = args[5];
+        const std::string file    = args[2];
+        const std::string dstHost = args[3];
+        uint16_t          dstPort = static_cast<uint16_t>(std::stoul(args[4]));
+        const std::string mode    = args[5];
 
-        Replayer rep;
-        if (!rep.Open(file)) { resp = "ERR open"; return; }
-
-        WSADATA wd{};
-        WSAStartup(MAKEWORD(2, 2), &wd);
-        SOCKET sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (sock == INVALID_SOCKET) { resp = "ERR socket"; return; }
-
-        sockaddr_in dst{};
-        dst.sin_family      = AF_INET;
-        dst.sin_port        = htons(dstPort);
-        inet_pton(AF_INET, dstHost.c_str(), &dst.sin_addr);
+        { Replayer probe; if (!probe.Open(file)) { resp = "ERR open: " + file; return; } }
 
         bool   do_timing = (mode != "burst");
         double scale     = 1.0;
         if (mode.rfind("scale:", 0) == 0) {
             try { scale = std::stod(mode.substr(6)); }
-            catch (...) { closesocket(sock); resp = "ERR bad scale"; return; }
+            catch (...) { resp = "ERR bad scale"; return; }
         }
 
-        Frame    f;
-        uint64_t first_cap_ts = 0;
-        uint64_t replay_start = static_cast<uint64_t>(g_clk.Now().count());
-
-        while (rep.Next(f)) {
-            if (f.Proto != Proto::UDP) continue;
-            if (do_timing) {
-                if (first_cap_ts == 0) first_cap_ts = f.Ts_ns;
-                uint64_t offset_ns = static_cast<uint64_t>((f.Ts_ns - first_cap_ts) * scale);
-                uint64_t fire_at   = replay_start + offset_ns;
-                while (static_cast<uint64_t>(g_clk.Now().count()) < fire_at)
-                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::thread([file, dstHost, dstPort, do_timing, scale]() {
+            Replayer rep;
+            if (!rep.Open(file)) return;
+            SOCKET sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock == INVALID_SOCKET) return;
+            sockaddr_in dst{};
+            dst.sin_family = AF_INET;
+            dst.sin_port   = htons(dstPort);
+            inet_pton(AF_INET, dstHost.c_str(), &dst.sin_addr);
+            Frame    f;
+            uint64_t first_cap_ts = 0;
+            uint64_t replay_start = static_cast<uint64_t>(g_clk.Now().count());
+            while (rep.Next(f)) {
+                if (do_timing) {
+                    if (first_cap_ts == 0) first_cap_ts = f.Ts_ns;
+                    uint64_t offset_ns = static_cast<uint64_t>((f.Ts_ns - first_cap_ts) * scale);
+                    uint64_t fire_at   = replay_start + offset_ns;
+                    while (static_cast<uint64_t>(g_clk.Now().count()) < fire_at)
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                }
+                ::sendto(sock, reinterpret_cast<const char *>(f.Payload.data()),
+                         static_cast<int>(f.Payload.size()), 0,
+                         reinterpret_cast<const sockaddr *>(&dst), sizeof(dst));
             }
-            ::sendto(sock, reinterpret_cast<const char *>(f.Payload.data()),
-                     static_cast<int>(f.Payload.size()), 0,
-                     reinterpret_cast<const sockaddr *>(&dst), sizeof(dst));
-        }
-        closesocket(sock);
-        resp = "OK replayed udp";
+            closesocket(sock);
+        }).detach();
+        resp = "OK replay-udp started";
         return;
     }
 
@@ -504,7 +504,6 @@ static void handle_cmd(HANDLE hPipe, const std::string &line, std::string &resp,
 
                 Frame f;
                 while (rep.Next(f)) {
-                    if (f.Proto != Proto::UDP) continue;
                     if (do_timing) {
                         uint64_t offset_ns = static_cast<uint64_t>(
                             static_cast<double>(f.Ts_ns - global_first_ts) * scale);
