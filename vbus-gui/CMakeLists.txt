@@ -24,6 +24,17 @@ GIT_TAG v1.92.4-docking
 )
 FetchContent_MakeAvailable(imgui)
 
+# nlohmann JSON (header-only)
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install    OFF CACHE INTERNAL "")
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 
 # ImGui sources
 set(IMGUI_SRC
@@ -42,6 +53,7 @@ src/main.cpp
 #src/glad.c
 src/imgui_layer.cpp
 src/model.cpp
+src/project.cpp
 src/daemon_client.cpp
 src/panels/panel_bus_list.cpp
 src/panels/panel_inspector.cpp
@@ -72,7 +84,7 @@ add_compile_definitions(IMGUI_IMPL_OPENGL_LOADER_GLAD)
 find_package(OpenGL REQUIRED)
 
 
-target_link_libraries(openvbus_imgui PRIVATE glfw OpenGL::GL)
+target_link_libraries(openvbus_imgui PRIVATE glfw OpenGL::GL nlohmann_json::nlohmann_json)
 
 
 if (WIN32)

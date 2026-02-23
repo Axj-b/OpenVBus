@@ -27,6 +27,9 @@ class Model {
     void                       startRecordAll();
     void                       stopRecordAll();
     void                       startReplayAll();
+    void                       newProject();
+    bool                       loadProject(const std::string &path);
+    void                       saveProject(const std::string &path);
     void                       replayFile(Bus &b, const std::string &mode);
     void                       startForward(Bus &b);
     void                       stopForward(Bus &b);
@@ -47,6 +50,7 @@ class Model {
 
     void subscribeFrames(Bus &b);
     void unsubscribeFrames(uint32_t busId);
+    void syncBusesToDaemon();  // create + subscribe all buses in state to daemon
 };
 
 } // namespace ovb

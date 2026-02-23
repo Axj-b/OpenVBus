@@ -66,9 +66,13 @@ namespace ovb {
         bool global_recording{false};
 
         // Global replay-all state
-        char replay_all_mode[16]{"exact"};  // exact | burst | scale
-        float replay_all_scale{1.0f};       // used when mode == "scale"
+        char  replay_all_mode[16]{"exact"};  // exact | burst | scale
+        float replay_all_scale{1.0f};        // used when mode == "scale"
         bool  global_replaying{false};
+
+        // Project persistence
+        char project_path[512]{};   // current .ovbproj path (empty = unsaved)
+        bool needs_daemon_sync{false}; // set after load; model syncs on daemon connect
     };
 
 } // namespace ovb

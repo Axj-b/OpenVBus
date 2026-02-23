@@ -6,6 +6,7 @@
 #include <backends/imgui_impl_opengl3.h>
 
 #include "imgui_layer.h"
+#include "project.h"
 
 using namespace ovb;
 
@@ -42,7 +43,16 @@ int main() {
 
     AppState state{};
     Model    model(state);
-    model.newBus("Bus1");
+
+    // ── Auto-load last project ────────────────────────────────────────────────
+    {
+        auto recent = ovb::ProjectIO::readRecent();
+        if (!recent.empty() && model.loadProject(recent)) {
+            // project loaded, buses restored
+        } else {
+            model.newBus("Bus1"); // default first-run bus
+        }
+    }
 
     ovb::ui::Context ui(state, model);
 
@@ -72,6 +82,11 @@ int main() {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+
+    // ── Auto-save project on exit ─────────────────────────────────────────────
+    if (state.project_path[0])
+        model.saveProject(state.project_path);
+
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;

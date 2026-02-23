@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "model.h"
+#include "project.h"
 #include "backends/iface_mock.h"
 #include "util/id_gen.h"
 #include <algorithm>
@@ -155,9 +156,11 @@ void Model::tick(double dt) {
         last_ping = m_tick_ns;
         bool was = state.daemon_connected;
         state.daemon_connected = m_daemon.isConnected();
-        if (!was && state.daemon_connected)
+        if (!was && state.daemon_connected) {
             addLog("[daemon] connected");
-        else if (was && !state.daemon_connected)
+            if (state.needs_daemon_sync)
+                syncBusesToDaemon();
+        } else if (was && !state.daemon_connected)
             addLog("[daemon] disconnected");
     }
 
@@ -338,31 +341,115 @@ void Model::startReplayAll() {
     if (!state.daemon_connected) {
         addLog("[replay-all] daemon not connected"); return;
     }
-    // Build: replay-sync <mode> file1 host1 port1 file2 host2 port2 ...
-    // mode for daemon: exact | burst | scale:K
+
+    // Build the mode string
     std::string daemonMode = state.replay_all_mode;
     if (daemonMode == "scale") {
         char buf[32];
         std::snprintf(buf, sizeof(buf), "scale:%.3f", state.replay_all_scale);
         daemonMode = buf;
     }
-    std::string cmd = "replay-sync " + daemonMode;
-    int streamCount = 0;
+
+    // Collect ready buses
+    struct Stream { std::string busName, srcFile, fwdHost; uint16_t fwdPort{}; bool needFwd{}; };
+    std::vector<Stream> streams;
     for (auto &b : state.buses) {
-        if (b.record_path[0] == '\0') continue;
+        const char *srcFile = (b.replay_path[0] != '\0') ? b.replay_path : b.record_path;
+        if (srcFile[0] == '\0') continue;
         if (b.forward_host[0] == '\0' || b.forward_port == 0) continue;
-        cmd += " " + std::string(b.record_path);
-        cmd += " " + std::string(b.forward_host);
-        cmd += " " + std::to_string(b.forward_port);
-        ++streamCount;
+        streams.push_back({b.name, srcFile, b.forward_host, b.forward_port, !b.forwarding});
     }
-    if (streamCount == 0) {
-        addLog("[replay-all] no buses with record file + forward destination set"); return;
+
+    if (streams.empty()) {
+        addLog("[replay-all] no buses ready — set replay/record file + forward host:port in Inspector");
+        return;
     }
-    std::string resp;
-    m_daemon.sendCmd(cmd, resp);
+
+    // Ensure forward-udp is active on each bus before replaying
+    for (auto &b : state.buses) {
+        const char *srcFile = (b.replay_path[0] != '\0') ? b.replay_path : b.record_path;
+        if (srcFile[0] == '\0') continue;
+        if (b.forward_host[0] == '\0' || b.forward_port == 0) continue;
+        if (!b.forwarding)
+            startForward(b);
+    }
+
+    // Launch one thread per bus — each opens its own pipe so they replay in parallel.
+    // This is the same code path as individual "Start Replay" but simultaneous.
+    addLog("[replay-all] starting " + std::to_string(streams.size()) + " stream(s), mode=" + daemonMode);
     state.global_replaying = true;
-    addLog("[replay-all] " + std::to_string(streamCount) + " stream(s) -> " + resp);
+
+    for (auto &s : streams) {
+        std::string cmd = "replay " + s.busName + " " + s.srcFile + " " + daemonMode;
+        addLog("[replay-all] -> " + cmd);
+        std::thread([cmd, busName = s.busName]() {
+            DaemonClient dc;
+            std::string resp;
+            dc.sendCmd(cmd, resp);
+            // Note: can't call addLog here (not thread-safe); result visible via daemon logs
+        }).detach();
+    }
+}
+
+// ─── Project file ─────────────────────────────────────────────────────────────
+
+void Model::newProject() {
+    // Delete all existing buses (daemon + state)
+    while (!state.buses.empty())
+        deleteBus(state.buses.front().id);
+    state.project_path[0]   = '\0';
+    state.global_recording  = false;
+    state.global_replaying  = false;
+    state.needs_daemon_sync = false;
+    addLog("[project] new project");
+    // Create a fresh default bus
+    newBus("Bus1");
+}
+
+bool Model::loadProject(const std::string &path) {
+    // Tear down existing buses cleanly
+    while (!state.buses.empty())
+        deleteBus(state.buses.front().id);
+    state.global_recording  = false;
+    state.global_replaying  = false;
+
+    if (!ProjectIO::load(path, state)) {
+        addLog("[project] failed to load: " + path);
+        return false;
+    }
+    std::snprintf(state.project_path, sizeof(state.project_path), "%s", path.c_str());
+    ProjectIO::writeRecent(path);
+    addLog("[project] loaded: " + path +
+           " (" + std::to_string(state.buses.size()) + " bus(es))");
+
+    // If daemon is already up, sync immediately; otherwise needs_daemon_sync
+    // stays true and tick() will fire syncBusesToDaemon() on next connect.
+    if (state.daemon_connected)
+        syncBusesToDaemon();
+    return true;
+}
+
+void Model::saveProject(const std::string &path) {
+    if (!ProjectIO::save(path, state)) {
+        addLog("[project] failed to save: " + path);
+        return;
+    }
+    std::snprintf(state.project_path, sizeof(state.project_path), "%s", path.c_str());
+    ProjectIO::writeRecent(path);
+    addLog("[project] saved: " + path);
+}
+
+void Model::syncBusesToDaemon() {
+    if (!state.daemon_connected) return;
+    for (auto &b : state.buses) {
+        std::string resp;
+        m_daemon.sendCmd("create " + b.name + " eth 1000000000", resp);
+        addLog("[sync] create '" + b.name + "' -> " + resp);
+        if (!m_subs.count(b.id))
+            subscribeFrames(b);
+    }
+    state.needs_daemon_sync = false;
+    addLog("[sync] " + std::to_string(state.buses.size()) + " bus(es) synced to daemon");
 }
 
 void Model::replayFile(Bus &b, const std::string &mode) {

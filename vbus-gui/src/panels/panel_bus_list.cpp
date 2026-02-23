@@ -56,15 +56,24 @@ void panels::BusList(Context &ctx) {
                 ImGui::SetTooltip("Scale factor: 2.0 = 2x slower, 0.5 = 2x faster");
             ImGui::SameLine();
         }
-        // Count buses that have both a record file and a forward destination
+        // Count buses that have both a source file and a forward destination
+        // Uses same logic as startReplayAll: prefer replay_path, fall back to record_path
         int readyStreams = 0;
-        for (auto &b : ctx.s.buses)
-            if (b.record_path[0] != '\0' && b.forward_host[0] != '\0' && b.forward_port != 0)
+        for (auto &b : ctx.s.buses) {
+            const char *srcFile = (b.replay_path[0] != '\0') ? b.replay_path : b.record_path;
+            if (srcFile[0] != '\0' && b.forward_host[0] != '\0' && b.forward_port != 0)
                 ++readyStreams;
+        }
         ImGui::BeginDisabled(!anyBus || !ctx.s.daemon_connected || readyStreams == 0);
         if (ImGui::Button("[REPLAY] ALL"))
             ctx.m.startReplayAll();
         ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (readyStreams == 0)
+                ImGui::SetTooltip("Per bus: set 'Replay file' (or Record file) + 'Forward host:port' in Inspector");
+            else
+                ImGui::SetTooltip("Sends replay-sync to daemon\nFile source: replay_path or record_path\nDest: forward host:port per bus");
+        }
         if (readyStreams > 0) {
             ImGui::SameLine();
             ImGui::TextDisabled("(%d stream%s)", readyStreams, readyStreams == 1 ? "" : "s");
